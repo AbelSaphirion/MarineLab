@@ -1,5 +1,16 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Numerics;
+using System.IO;
 using System.Linq;
+using Newtonsoft.Json;
+using Veldrid;
+using Veldrid.Sdl2;
+using Veldrid.StartupUtilities;
+using ImGuiNET;
+
+using static ImGuiNET.ImGuiNative;
 
 namespace marine
 {
@@ -11,16 +22,64 @@ namespace marine
             for (int y = 0; y < 10; y++)
                 Console.WriteLine(g.GetMap()[y].Aggregate("", (acc, x) => acc + x.ToString() + " "));
             Console.ReadLine();
+
+            Console.WriteLine(Pyplot.MakePlot(g.Export("export.json")));
+            Console.ReadLine();
+
+        }
+
+        static class Pyplot
+        {
+            static string _pathPy = "plot.py";
+            static string _condaEnv = "base";
+            static string _pngName = "fig.png";
+
+            public static string MakePlot(string json)
+            {
+                var cmd = new Process();
+                var info = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    WorkingDirectory = "./",
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false
+                };
+
+                var output = new List<string>();
+                cmd.OutputDataReceived += (sender, args) => output.Add(args.Data);
+
+                cmd.StartInfo = info;
+                cmd.Start();
+
+                using (var s = cmd.StandardInput)
+                {
+                    cmd.BeginOutputReadLine();
+                    s.WriteLine("conda activate {0}", _condaEnv);
+                    s.WriteLine("python {0} {1} {2}", _pathPy, json, _pngName);
+                }
+                cmd.WaitForExit();
+                string response = output.Last();
+                for (int i = 0; i < output.Count - 1; i++)
+                {
+                    if(output[i].Contains("python"))
+                    {
+                        response = output[i + 1];
+                        break;
+                    }
+                }
+                return response;
+            }
         }
 
         class Game
         {
-            byte[][] Map = new byte[10][];
+            int[][] Map = new int[10][];
             int[] Boats = new int[] { 1, 2, 3, 4 };
 
             public Game()
             {
-                for(int i = 0; i < 10; i++) Map[i] = new byte[10];
+                for(int i = 0; i < 10; i++) Map[i] = new int[10];
 
                 GenerateMap();
             }
@@ -54,7 +113,7 @@ namespace marine
                 }
             }
 
-            public byte[][] GetMap()
+            public int[][] GetMap()
             {
                 return Map;
             }
@@ -86,6 +145,16 @@ namespace marine
                     }
                     size--;
                 }
+            }
+
+            public string Export(string fileName)
+            {
+                string json = JsonConvert.SerializeObject(GetMap());
+                using (var s = new JsonTextWriter(new StreamWriter(fileName, false)))
+                {
+                    s.WriteRaw(json);
+                }
+                return fileName;
             }
         }
     }
