@@ -1,40 +1,95 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Numerics;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
-using Veldrid;
-using Veldrid.Sdl2;
-using Veldrid.StartupUtilities;
 using ImGuiNET;
-
-using static ImGuiNET.ImGuiNative;
 
 namespace marine
 {
     class Program
     {
+        static readonly string ProgramName = "MarineLab";
+        static readonly string ExportPath = "export.json";
+        static readonly string ImagePath = "fig.png";
         static void Main(string[] args)
         {
             var g = new Game();
-            for (int y = 0; y < 10; y++)
-                Console.WriteLine(g.GetMap()[y].Aggregate("", (acc, x) => acc + x.ToString() + " "));
-            Console.ReadLine();
+            g.Export(ExportPath);
+            Pyplot.MakePlot(ExportPath, ImagePath);
+            var gui = new Gui(ImagePath);
+            gui.GenerateButtonPressed += () =>
+            {
+                if (gui.GenerateSemaphore.WaitOne(25))
+                {
+                    var t = Task.Run(() =>
+                    {
+                        gui.ToggleLoadingText(true);
+                        g = new Game();
+                        g.Export(ExportPath);
+                        Pyplot.MakePlot(ExportPath, ImagePath);
+                        gui.LoadImage();
+                        gui.ToggleLoadingText(false);
+                        gui.GenerateSemaphore.Release();
+                    });
+                }
+            };
+            gui.Init(ProgramName, 700, 600);
+        }
 
-            Console.WriteLine(Pyplot.MakePlot(g.Export("export.json")));
-            Console.ReadLine();
+        class Gui : ImGuiWindow
+        {
+            static bool _mainWindow;
+            static System.IntPtr _image;
+            static string _loadingText = "";
+            public static string ImagePath { get; private set; }
 
+            public delegate void Generate();
+            public event Generate GenerateButtonPressed;
+            public volatile Semaphore GenerateSemaphore = new Semaphore(1, 1);
+            public Gui(string imgPath)
+            {
+                ImagePath = imgPath;
+            }
+
+            public void ToggleLoadingText(bool isLoading)
+            {
+                if (isLoading) _loadingText = "Loading";
+                else _loadingText = "Loaded";
+            }
+
+            protected override void SubmitUI()
+            {
+                ImGui.SetNextWindowPos(new Vector2(0, 0));
+                ImGui.SetNextWindowSize(new Vector2(_window.Width, _window.Height));
+                ImGui.Begin("ImGui Window",ref _mainWindow ,ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoTitleBar);
+                if (ImGui.Button("Generate")) GenerateButtonPressed?.Invoke();
+                ImGui.SameLine();
+                ImGui.Text(_loadingText);
+                ImGui.Image(_image, new Vector2(640, 480));
+                ImGui.End();
+            }
+
+            protected override void Preload()
+            {
+                LoadImage();
+            }
+
+            public void LoadImage()
+            {
+                _image = NewImage(ImagePath);
+            }
         }
 
         static class Pyplot
         {
             static string _pathPy = "plot.py";
             static string _condaEnv = "base";
-            static string _pngName = "fig.png";
 
-            public static string MakePlot(string json)
+            public static void MakePlot(string jsonPath, string imagePath)
             {
                 var cmd = new Process();
                 var info = new ProcessStartInfo
@@ -43,32 +98,19 @@ namespace marine
                     WorkingDirectory = "./",
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
-                    UseShellExecute = false
+                    UseShellExecute = false,
+                    CreateNoWindow = true
                 };
-
-                var output = new List<string>();
-                cmd.OutputDataReceived += (sender, args) => output.Add(args.Data);
 
                 cmd.StartInfo = info;
                 cmd.Start();
 
                 using (var s = cmd.StandardInput)
                 {
-                    cmd.BeginOutputReadLine();
                     s.WriteLine("conda activate {0}", _condaEnv);
-                    s.WriteLine("python {0} {1} {2}", _pathPy, json, _pngName);
+                    s.WriteLine("python {0} {1} {2}", _pathPy, jsonPath, imagePath);
                 }
                 cmd.WaitForExit();
-                string response = output.Last();
-                for (int i = 0; i < output.Count - 1; i++)
-                {
-                    if(output[i].Contains("python"))
-                    {
-                        response = output[i + 1];
-                        break;
-                    }
-                }
-                return response;
             }
         }
 
@@ -146,15 +188,21 @@ namespace marine
                     size--;
                 }
             }
-
-            public string Export(string fileName)
+            public void Export(string fileName)
             {
                 string json = JsonConvert.SerializeObject(GetMap());
                 using (var s = new JsonTextWriter(new StreamWriter(fileName, false)))
                 {
                     s.WriteRaw(json);
                 }
-                return fileName;
+            }
+
+            public override string ToString()
+            {
+                string s = "";
+                for (int y = 0; y < 10; y++)
+                    s += GetMap()[y].Aggregate("", (acc, x) => acc + x.ToString() + " ") + "\n";
+                return s;
             }
         }
     }
